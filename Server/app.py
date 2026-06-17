@@ -23,11 +23,14 @@ note_scheduler_started = False
 def get_db():
     server = os.getenv("DB_SERVER", "aminsproject.database.windows.net")
     database = os.getenv("DB_NAME", "aminsproject")
-    user = os.getenv("DB_USER", "CloudSA18cabeae")
+    user = os.getenv("DB_USER", "")
     password = os.getenv("DB_PASSWORD", "")
 
+    if not user:
+        raise RuntimeError("Database username is missing. Add DB_USER in Server\\credentials.local.ps1 or enter it at startup.")
+
     if not password:
-        raise RuntimeError("Database password is missing. Set DB_PASSWORD in Server\\start-server.bat.")
+        raise RuntimeError("Database password is missing. Add DB_PASSWORD in Server\\credentials.local.ps1 or enter it at startup.")
 
     try:
         return pymssql.connect(
@@ -43,7 +46,7 @@ def get_db():
         error_text = str(error)
         if "18456" in error_text:
             raise RuntimeError(
-                "Database login failed. Check DB_USER and DB_PASSWORD in Server\\start-server.bat, "
+                "Database login failed. Check DB_USER and DB_PASSWORD in Server\\credentials.local.ps1, "
                 "or reset the Azure SQL password."
             ) from error
         raise RuntimeError(
@@ -300,7 +303,7 @@ def get_sms_client():
 
     connection_string = os.getenv("ACS_CONNECTION_STRING")
     if not connection_string:
-        raise RuntimeError("ACS_CONNECTION_STRING is missing in Server\\start-server.bat")
+        raise RuntimeError("ACS_CONNECTION_STRING is missing. Add it in Server\\credentials.local.ps1 or enter it at startup.")
 
     return SmsClient.from_connection_string(connection_string)
 
@@ -308,7 +311,7 @@ def get_sms_client():
 def send_sms_message(to_phone_number, message):
     from_phone_number = os.getenv("ACS_SMS_FROM_PHONE")
     if not from_phone_number:
-        raise RuntimeError("ACS_SMS_FROM_PHONE is missing in Server\\start-server.bat")
+        raise RuntimeError("ACS_SMS_FROM_PHONE is missing. Add it in Server\\credentials.local.ps1 or enter it at startup.")
 
     sms_client = get_sms_client()
     responses = sms_client.send(

@@ -8,6 +8,7 @@ __pycache__/
 # Local environment and editor files
 .env
 .env.*
+Server/credentials.local.ps1
 .vscode/
 .idea/
 
