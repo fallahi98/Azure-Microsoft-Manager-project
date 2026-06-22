@@ -26,13 +26,18 @@
       <div class="policy-hero">
         <p class="eyebrow">Supporting documentation</p>
         <h1>SMS Compliance</h1>
-        <p class="meta">Effective date: June 17, 2026</p>
+        <p class="meta">Effective date: June 21, 2026</p>
       </div>
 
       <div class="policy-body">
         <section>
           <h2>Program Description</h2>
-          <p>Client Manager is a private administrative client-management project. SMS functionality is used only for controlled client reminder and testing workflows managed by the project administrator.</p>
+          <p>Client Manager is a private administrative client-management project. SMS functionality is used only for controlled client reminder and testing workflows managed by the project administrator. The current SMS workflow uses configured SMTP email settings and a carrier email-to-SMS gateway, such as Verizon vtext.com, instead of Azure Communication Services.</p>
+        </section>
+
+        <section>
+          <h2>SMS Delivery Method</h2>
+          <p>Messages are sent from the administrator's configured email account to the recipient carrier gateway address. For Verizon numbers, the application formats the phone number as a vtext.com gateway address. Delivery depends on the recipient carrier supporting email-to-SMS gateway delivery.</p>
         </section>
 
         <section>
@@ -51,12 +56,13 @@
             <li>Administrative reminders related to client records or case notes.</li>
             <li>Application testing by the project administrator.</li>
             <li>Operational notifications configured inside the private application.</li>
+            <li>Email-to-SMS delivery through the configured carrier gateway.</li>
           </ul>
         </section>
 
         <section>
           <h2>Opt-Out</h2>
-          <p>If a recipient asks not to receive messages, the administrator should remove that phone number from future SMS workflows. Any production deployment should honor STOP, unsubscribe, or equivalent opt-out requests where required.</p>
+          <p>If a recipient asks not to receive messages, the administrator should remove that phone number from future SMS workflows. Any production deployment should honor STOP, unsubscribe, or equivalent opt-out requests where required. Because email-to-SMS gateways may not automatically process carrier opt-out keywords, the administrator is responsible for maintaining the opt-out list.</p>
         </section>
       </div>
     </main>
@@ -64,8 +70,9 @@
     <footer class="site-footer">
       <div class="footer-inner">
         <span>&copy; 2026 Client Manager. All rights reserved.</span>
-        <span><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></span>
+        <span><a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a></span>
       </div>
     </footer>
   </body>
 </html>
+
