@@ -1,14 +1,13 @@
 # Copy this file to credentials.local.ps1 and fill in your real values.
 # credentials.local.ps1 is ignored by Git so secrets stay local.
 
-$env:DB_SERVER="aminsproject.database.windows.net"
-$env:DB_PORT="1433"
-$env:DB_NAME="aminsproject"
-$env:DB_USER="your-database-user"
+$env:DB_HOST="localhost"
+$env:DB_PORT="5432"
+$env:DB_NAME="client_manager"
+$env:DB_USER="postgres"
 $env:DB_PASSWORD="your-database-password"
 
-$env:ACS_CONNECTION_STRING="endpoint=https://your-resource.communication.azure.com/;accesskey=your-access-key"
-$env:ACS_SMS_FROM_PHONE="+10000000000"
+$env:SMS_GATEWAY_DOMAIN="vtext.com"
 
 $env:ADMIN_EMAIL="you@example.com"
 $env:SMTP_HOST="smtp.gmail.com"

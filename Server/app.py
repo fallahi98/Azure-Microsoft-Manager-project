@@ -8,11 +8,8 @@ from email.message import EmailMessage
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import pymssql
-try:
-    from azure.communication.sms import SmsClient
-except ImportError:
-    SmsClient = None
+import psycopg2
+from psycopg2 import OperationalError
 
 
 app = Flask(__name__)
@@ -21,10 +18,11 @@ note_scheduler_started = False
 
 
 def get_db():
-    server = os.getenv("DB_SERVER", "aminsproject.database.windows.net")
-    database = os.getenv("DB_NAME", "aminsproject")
+    host = os.getenv("DB_HOST", os.getenv("DB_SERVER", "localhost"))
+    database = os.getenv("DB_NAME", "client_manager")
     user = os.getenv("DB_USER", "")
     password = os.getenv("DB_PASSWORD", "")
+    port = int(os.getenv("DB_PORT", "5432"))
 
     if not user:
         raise RuntimeError("Database username is missing. Add DB_USER in Server\\credentials.local.ps1 or enter it at startup.")
@@ -33,24 +31,17 @@ def get_db():
         raise RuntimeError("Database password is missing. Add DB_PASSWORD in Server\\credentials.local.ps1 or enter it at startup.")
 
     try:
-        return pymssql.connect(
-            server=server,
-            port=int(os.getenv("DB_PORT", "1433")),
+        return psycopg2.connect(
+            host=host,
+            port=port,
             user=user,
             password=password,
-            database=database,
-            login_timeout=15,
-            timeout=30,
+            dbname=database,
+            connect_timeout=15,
         )
-    except pymssql.OperationalError as error:
-        error_text = str(error)
-        if "18456" in error_text:
-            raise RuntimeError(
-                "Database login failed. Check DB_USER and DB_PASSWORD in Server\\credentials.local.ps1, "
-                "or reset the Azure SQL password."
-            ) from error
+    except OperationalError as error:
         raise RuntimeError(
-            "Database connection failed. Check DB_SERVER, Azure SQL firewall rules, and internet access."
+            "PostgreSQL connection failed. Check DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD."
         ) from error
 
 
@@ -71,7 +62,7 @@ def row_to_client_from_db(cursor, client_id):
     cursor.execute(
         """
         SELECT id, first_name, last_name, address, zip_code, city, email, phone_number
-        FROM dbo.Clients
+        FROM clients
         WHERE id = %s
         """,
         (client_id,),
@@ -100,7 +91,7 @@ def row_to_case_from_db(cursor, case_id):
     cursor.execute(
         """
         SELECT id, client_id, title, status, created_at, closed_at, history
-        FROM dbo.Cases
+        FROM cases
         WHERE id = %s
         """,
         (case_id,),
@@ -130,33 +121,23 @@ def row_to_reminder(row):
 def ensure_clients_table(cursor):
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.Clients', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.Clients (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                first_name NVARCHAR(100) NOT NULL,
-                last_name NVARCHAR(100) NOT NULL,
-                address NVARCHAR(255) NOT NULL,
-                zip_code NVARCHAR(20) NOT NULL,
-                city NVARCHAR(100) NOT NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            );
-        END;
+        CREATE TABLE IF NOT EXISTS clients (
+            id SERIAL PRIMARY KEY,
+            first_name VARCHAR(100) NOT NULL,
+            last_name VARCHAR(100) NOT NULL,
+            address VARCHAR(255),
+            zip_code VARCHAR(20),
+            city VARCHAR(100),
+            email VARCHAR(255),
+            phone_number VARCHAR(30),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
 
-        IF COL_LENGTH('dbo.Clients', 'address') IS NULL
-            ALTER TABLE dbo.Clients ADD address NVARCHAR(255) NULL;
-
-        IF COL_LENGTH('dbo.Clients', 'zip_code') IS NULL
-            ALTER TABLE dbo.Clients ADD zip_code NVARCHAR(20) NULL;
-
-        IF COL_LENGTH('dbo.Clients', 'city') IS NULL
-            ALTER TABLE dbo.Clients ADD city NVARCHAR(100) NULL;
-
-        IF COL_LENGTH('dbo.Clients', 'email') IS NULL
-            ALTER TABLE dbo.Clients ADD email NVARCHAR(255) NULL;
-
-        IF COL_LENGTH('dbo.Clients', 'phone_number') IS NULL
-            ALTER TABLE dbo.Clients ADD phone_number NVARCHAR(30) NULL;
+        ALTER TABLE clients ADD COLUMN IF NOT EXISTS address VARCHAR(255);
+        ALTER TABLE clients ADD COLUMN IF NOT EXISTS zip_code VARCHAR(20);
+        ALTER TABLE clients ADD COLUMN IF NOT EXISTS city VARCHAR(100);
+        ALTER TABLE clients ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+        ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone_number VARCHAR(30);
         """
     )
 
@@ -165,28 +146,19 @@ def ensure_cases_table(cursor):
     ensure_clients_table(cursor)
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.Cases', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.Cases (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                client_id INT NOT NULL,
-                title NVARCHAR(150) NULL,
-                status NVARCHAR(10) NOT NULL DEFAULT 'Open',
-                history NVARCHAR(MAX) NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                closed_at DATETIME2 NULL,
-                CONSTRAINT CK_Cases_Status CHECK (status IN ('Open', 'Closed')),
-                CONSTRAINT FK_Cases_Clients FOREIGN KEY (client_id)
-                    REFERENCES dbo.Clients(id)
-                    ON DELETE CASCADE
-            );
-        END;
+        CREATE TABLE IF NOT EXISTS cases (
+            id SERIAL PRIMARY KEY,
+            client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+            title VARCHAR(150),
+            status VARCHAR(10) NOT NULL DEFAULT 'Open',
+            history TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            closed_at TIMESTAMP,
+            CONSTRAINT cases_status_check CHECK (status IN ('Open', 'Closed'))
+        );
 
-        IF COL_LENGTH('dbo.Cases', 'history') IS NULL
-            ALTER TABLE dbo.Cases ADD history NVARCHAR(MAX) NULL;
-
-        IF COL_LENGTH('dbo.Cases', 'title') IS NULL
-            ALTER TABLE dbo.Cases ADD title NVARCHAR(150) NULL;
+        ALTER TABLE cases ADD COLUMN IF NOT EXISTS title VARCHAR(150);
+        ALTER TABLE cases ADD COLUMN IF NOT EXISTS history TEXT;
         """
     )
 
@@ -195,49 +167,20 @@ def ensure_admin_notes_table(cursor):
     ensure_cases_table(cursor)
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.AdminNotes', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.AdminNotes (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                client_id INT NULL,
-                case_id INT NULL,
-                note NVARCHAR(MAX) NOT NULL,
-                send_at DATETIME2 NOT NULL,
-                sent_at DATETIME2 NULL,
-                failed_at DATETIME2 NULL,
-                error_message NVARCHAR(1000) NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            );
-        END;
+        CREATE TABLE IF NOT EXISTS admin_notes (
+            id SERIAL PRIMARY KEY,
+            client_id INT REFERENCES clients(id) ON DELETE CASCADE,
+            case_id INT REFERENCES cases(id) ON DELETE CASCADE,
+            note TEXT NOT NULL,
+            send_at TIMESTAMP NOT NULL,
+            sent_at TIMESTAMP,
+            failed_at TIMESTAMP,
+            error_message VARCHAR(1000),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
 
-        IF COL_LENGTH('dbo.AdminNotes', 'client_id') IS NULL
-            ALTER TABLE dbo.AdminNotes ADD client_id INT NULL;
-
-        IF COL_LENGTH('dbo.AdminNotes', 'case_id') IS NULL
-            ALTER TABLE dbo.AdminNotes ADD case_id INT NULL;
-
-        IF NOT EXISTS (
-            SELECT 1
-            FROM sys.foreign_keys
-            WHERE name = 'FK_AdminNotes_Clients'
-        )
-        BEGIN
-            ALTER TABLE dbo.AdminNotes
-            ADD CONSTRAINT FK_AdminNotes_Clients
-            FOREIGN KEY (client_id) REFERENCES dbo.Clients(id)
-            ON DELETE CASCADE;
-        END;
-
-        IF NOT EXISTS (
-            SELECT 1
-            FROM sys.foreign_keys
-            WHERE name = 'FK_AdminNotes_Cases'
-        )
-        BEGIN
-            ALTER TABLE dbo.AdminNotes
-            ADD CONSTRAINT FK_AdminNotes_Cases
-            FOREIGN KEY (case_id) REFERENCES dbo.Cases(id);
-        END;
+        ALTER TABLE admin_notes ADD COLUMN IF NOT EXISTS client_id INT;
+        ALTER TABLE admin_notes ADD COLUMN IF NOT EXISTS case_id INT;
         """
     )
 
@@ -246,22 +189,15 @@ def ensure_reminders_table(cursor):
     ensure_cases_table(cursor)
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.Reminders', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.Reminders (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                client_id INT NOT NULL,
-                case_id INT NOT NULL,
-                [message] NVARCHAR(MAX) NOT NULL,
-                remind_at DATETIME2 NOT NULL,
-                finished_at DATETIME2 NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                CONSTRAINT FK_Reminders_Clients FOREIGN KEY (client_id)
-                    REFERENCES dbo.Clients(id),
-                CONSTRAINT FK_Reminders_Cases FOREIGN KEY (case_id)
-                    REFERENCES dbo.Cases(id)
-            );
-        END;
+        CREATE TABLE IF NOT EXISTS reminders (
+            id SERIAL PRIMARY KEY,
+            client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+            case_id INT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            message TEXT NOT NULL,
+            remind_at TIMESTAMP NOT NULL,
+            finished_at TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """
     )
 
@@ -270,25 +206,18 @@ def ensure_sms_messages_table(cursor):
     ensure_cases_table(cursor)
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.SmsMessages', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.SmsMessages (
-                id INT IDENTITY(1,1) PRIMARY KEY,
-                client_id INT NOT NULL,
-                case_id INT NULL,
-                phone_number NVARCHAR(30) NOT NULL,
-                message NVARCHAR(MAX) NOT NULL,
-                status NVARCHAR(50) NOT NULL,
-                provider_message_id NVARCHAR(255) NULL,
-                error_message NVARCHAR(1000) NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                sent_at DATETIME2 NULL,
-                CONSTRAINT FK_SmsMessages_Clients FOREIGN KEY (client_id)
-                    REFERENCES dbo.Clients(id),
-                CONSTRAINT FK_SmsMessages_Cases FOREIGN KEY (case_id)
-                    REFERENCES dbo.Cases(id)
-            );
-        END;
+        CREATE TABLE IF NOT EXISTS sms_messages (
+            id SERIAL PRIMARY KEY,
+            client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+            case_id INT REFERENCES cases(id) ON DELETE CASCADE,
+            phone_number VARCHAR(30) NOT NULL,
+            message TEXT NOT NULL,
+            status VARCHAR(50) NOT NULL,
+            provider_message_id VARCHAR(255),
+            error_message VARCHAR(1000),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sent_at TIMESTAMP
+        );
         """
     )
 
@@ -297,35 +226,48 @@ def error_response(message, status_code=500):
     return jsonify({"error": message}), status_code
 
 
-def get_sms_client():
-    if SmsClient is None:
-        raise RuntimeError("Azure SMS SDK is not installed. Run: pip install azure-communication-sms")
+def normalize_sms_phone_number(phone_number):
+    digits = "".join(character for character in str(phone_number) if character.isdigit())
 
-    connection_string = os.getenv("ACS_CONNECTION_STRING")
-    if not connection_string:
-        raise RuntimeError("ACS_CONNECTION_STRING is missing. Add it in Server\\credentials.local.ps1 or enter it at startup.")
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
 
-    return SmsClient.from_connection_string(connection_string)
+    if len(digits) != 10:
+        raise RuntimeError("Client phone number must be a 10 digit US number for email-to-SMS")
+
+    return digits
 
 
 def send_sms_message(to_phone_number, message):
-    from_phone_number = os.getenv("ACS_SMS_FROM_PHONE")
-    if not from_phone_number:
-        raise RuntimeError("ACS_SMS_FROM_PHONE is missing. Add it in Server\\credentials.local.ps1 or enter it at startup.")
+    gateway_domain = os.getenv("SMS_GATEWAY_DOMAIN", "vtext.com").strip()
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_from_email = os.getenv("SMTP_FROM_EMAIL", smtp_username)
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 
-    sms_client = get_sms_client()
-    responses = sms_client.send(
-        from_=from_phone_number,
-        to=[to_phone_number],
-        message=message,
-        enable_delivery_report=True,
-    )
+    if not gateway_domain:
+        raise RuntimeError("SMS_GATEWAY_DOMAIN is missing. Use vtext.com for Verizon SMS.")
 
-    response = responses[0] if responses else None
-    if response and not response.successful:
-        raise RuntimeError(response.error_message or "Azure Communication Services could not send the SMS")
+    if not all([smtp_host, smtp_username, smtp_password, smtp_from_email]):
+        raise RuntimeError("SMTP settings are missing. SMS gateway sending uses your email account.")
 
-    return response.message_id if response else None
+    sms_email_address = f"{normalize_sms_phone_number(to_phone_number)}@{gateway_domain}"
+
+    sms_email = EmailMessage()
+    sms_email["Subject"] = ""
+    sms_email["From"] = smtp_from_email
+    sms_email["To"] = sms_email_address
+    sms_email.set_content(message[:1400])
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+        if smtp_use_tls:
+            smtp.starttls()
+        smtp.login(smtp_username, smtp_password)
+        smtp.send_message(sms_email)
+
+    return f"email-to-sms:{sms_email_address}"
 
 
 def send_email_to_admin(subject, body):
@@ -386,7 +328,7 @@ def prepend_case_history(cursor, case_id, note):
 
     cursor.execute(
         """
-        UPDATE dbo.Cases
+        UPDATE cases
         SET history = %s
         WHERE id = %s
         """,
@@ -416,7 +358,7 @@ def schedule_case_reminder(cursor, case_id, client_id, send_at, note="Case follo
 
     cursor.execute(
         """
-        INSERT INTO dbo.AdminNotes (client_id, case_id, note, send_at)
+        INSERT INTO admin_notes (client_id, case_id, note, send_at)
         VALUES (%s, %s, %s, %s)
         """,
         (client_id, case_id, note, send_at),
@@ -514,12 +456,12 @@ def send_due_admin_notes():
                 clients.zip_code,
                 clients.city,
                 clients.email
-            FROM dbo.AdminNotes notes
-            LEFT JOIN dbo.Clients clients ON clients.id = notes.client_id
-            LEFT JOIN dbo.Cases cases ON cases.id = notes.case_id
+            FROM admin_notes notes
+            LEFT JOIN clients clients ON clients.id = notes.client_id
+            LEFT JOIN cases cases ON cases.id = notes.case_id
             WHERE notes.sent_at IS NULL
                 AND notes.failed_at IS NULL
-                AND notes.send_at <= SYSUTCDATETIME()
+                AND notes.send_at <= CURRENT_TIMESTAMP
             ORDER BY notes.send_at ASC
             """
         )
@@ -565,14 +507,14 @@ def send_due_admin_notes():
 
                 if email_sent:
                     cursor.execute(
-                        "UPDATE dbo.AdminNotes SET sent_at = SYSUTCDATETIME() WHERE id = %s",
+                        "UPDATE admin_notes SET sent_at = CURRENT_TIMESTAMP WHERE id = %s",
                         (note_id,),
                     )
                 else:
                     cursor.execute(
                         """
-                        UPDATE dbo.AdminNotes
-                        SET failed_at = SYSUTCDATETIME(),
+                        UPDATE admin_notes
+                        SET failed_at = CURRENT_TIMESTAMP,
                             error_message = %s
                         WHERE id = %s
                         """,
@@ -582,8 +524,8 @@ def send_due_admin_notes():
                 app.logger.exception("Failed to send scheduled admin note")
                 cursor.execute(
                     """
-                    UPDATE dbo.AdminNotes
-                    SET failed_at = SYSUTCDATETIME(),
+                    UPDATE admin_notes
+                    SET failed_at = CURRENT_TIMESTAMP,
                         error_message = %s
                     WHERE id = %s
                     """,
@@ -630,7 +572,7 @@ def health_check():
         {
             "status": "ok",
             "message": "Flask backend is running",
-            "database_driver": "pymssql",
+            "database_driver": "psycopg2",
         }
     )
 
@@ -646,7 +588,7 @@ def get_clients():
             cursor.execute(
                 """
                 SELECT id, first_name, last_name, address, zip_code, city, email, phone_number
-                FROM dbo.Clients
+                FROM clients
                 ORDER BY id DESC
                 """
             )
@@ -700,12 +642,12 @@ def add_client():
             ensure_clients_table(cursor)
             cursor.execute(
                 """
-                INSERT INTO dbo.Clients (first_name, last_name, address, zip_code, city, email, phone_number)
+                INSERT INTO clients (first_name, last_name, address, zip_code, city, email, phone_number)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (first_name, last_name, address, zip_code, city, email, phone_number),
             )
-            cursor.execute("SELECT CAST(SCOPE_IDENTITY() AS INT)")
             client_id = cursor.fetchone()[0]
 
             client = {
@@ -779,7 +721,7 @@ def update_client(client_id):
             ensure_clients_table(cursor)
             cursor.execute(
                 """
-                UPDATE dbo.Clients
+                UPDATE clients
                 SET first_name = %s,
                     last_name = %s,
                     address = %s,
@@ -833,7 +775,7 @@ def get_client_cases(client_id):
             cursor.execute(
                 """
                 SELECT id, client_id, title, status, created_at, closed_at, history
-                FROM dbo.Cases
+                FROM cases
                 WHERE client_id = %s
                 ORDER BY created_at DESC
                 """,
@@ -881,9 +823,9 @@ def create_client_case(client_id):
 
             cursor.execute(
                 """
-                INSERT INTO dbo.Cases (client_id, title, status)
-                OUTPUT INSERTED.id, INSERTED.client_id, INSERTED.title, INSERTED.status, INSERTED.created_at, INSERTED.closed_at, INSERTED.history
+                INSERT INTO cases (client_id, title, status)
                 VALUES (%s, %s, 'Open')
+                RETURNING id, client_id, title, status, created_at, closed_at, history
                 """,
                 (client_id, case_title),
             )
@@ -922,9 +864,9 @@ def close_case(case_id):
 
             cursor.execute(
                 """
-                UPDATE dbo.Cases
+                UPDATE cases
                 SET status = 'Closed',
-                    closed_at = COALESCE(closed_at, SYSUTCDATETIME())
+                    closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP)
                 WHERE id = %s
                 """,
                 (case_id,),
@@ -951,9 +893,11 @@ def delete_case(case_id):
                 return error_response("Case not found", 404)
 
             ensure_reminders_table(cursor)
-            cursor.execute("DELETE FROM dbo.Reminders WHERE case_id = %s", (case_id,))
-            cursor.execute("DELETE FROM dbo.AdminNotes WHERE case_id = %s", (case_id,))
-            cursor.execute("DELETE FROM dbo.Cases WHERE id = %s", (case_id,))
+            ensure_sms_messages_table(cursor)
+            cursor.execute("DELETE FROM reminders WHERE case_id = %s", (case_id,))
+            cursor.execute("DELETE FROM admin_notes WHERE case_id = %s", (case_id,))
+            cursor.execute("DELETE FROM sms_messages WHERE case_id = %s", (case_id,))
+            cursor.execute("DELETE FROM cases WHERE id = %s", (case_id,))
             conn.commit()
 
         return jsonify({"message": "Case deleted successfully", "id": case_id})
@@ -1041,7 +985,7 @@ def get_case_email_history(case_id):
             cursor.execute(
                 """
                 SELECT id, note, send_at, sent_at, failed_at, error_message, created_at
-                FROM dbo.AdminNotes
+                FROM admin_notes
                 WHERE case_id = %s
                 ORDER BY created_at DESC, send_at DESC
                 """,
@@ -1100,20 +1044,9 @@ def schedule_case_email(case_id):
 
             cursor.execute(
                 """
-                INSERT INTO dbo.AdminNotes (client_id, case_id, note, send_at)
+                INSERT INTO admin_notes (client_id, case_id, note, send_at)
                 VALUES (%s, %s, %s, %s)
-                """,
-                (client["id"], case_id, note, send_at),
-            )
-            cursor.execute(
-                """
-                SELECT TOP 1 id, note, send_at, created_at
-                FROM dbo.AdminNotes
-                WHERE client_id = %s
-                    AND case_id = %s
-                    AND note = %s
-                    AND send_at = %s
-                ORDER BY id DESC
+                RETURNING id, note, send_at, created_at
                 """,
                 (client["id"], case_id, note, send_at),
             )
@@ -1169,7 +1102,7 @@ def send_case_sms(case_id):
             status = "Sent"
             provider_message_id = None
             error_message = None
-            sent_at_sql = "SYSUTCDATETIME()"
+            sent_at_sql = "CURRENT_TIMESTAMP"
 
             try:
                 provider_message_id = send_sms_message(phone_number, message)
@@ -1180,7 +1113,7 @@ def send_case_sms(case_id):
 
             cursor.execute(
                 f"""
-                INSERT INTO dbo.SmsMessages (
+                INSERT INTO sms_messages (
                     client_id,
                     case_id,
                     phone_number,
@@ -1191,21 +1124,10 @@ def send_case_sms(case_id):
                     sent_at
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, {sent_at_sql})
+                RETURNING id, client_id, case_id, phone_number, message, status,
+                    provider_message_id, error_message, created_at, sent_at
                 """,
                 (client["id"], case_id, phone_number, message, status, provider_message_id, error_message),
-            )
-            cursor.execute(
-                """
-                SELECT TOP 1 id, client_id, case_id, phone_number, message, status,
-                    provider_message_id, error_message, created_at, sent_at
-                FROM dbo.SmsMessages
-                WHERE client_id = %s
-                    AND case_id = %s
-                    AND phone_number = %s
-                    AND message = %s
-                ORDER BY id DESC
-                """,
-                (client["id"], case_id, phone_number, message),
             )
             row = cursor.fetchone()
             conn.commit()
@@ -1249,7 +1171,7 @@ def get_case_sms_history(case_id):
                 """
                 SELECT id, client_id, case_id, phone_number, message, status,
                     provider_message_id, error_message, created_at, sent_at
-                FROM dbo.SmsMessages
+                FROM sms_messages
                 WHERE case_id = %s
                 ORDER BY created_at DESC, id DESC
                 """,
@@ -1318,34 +1240,32 @@ def create_reminder():
 
             cursor.execute(
                 """
-                INSERT INTO dbo.Reminders (client_id, case_id, [message], remind_at)
+                INSERT INTO reminders (client_id, case_id, message, remind_at)
                 VALUES (%s, %s, %s, %s)
+                RETURNING id
                 """,
                 (client_id, case_id, message, remind_at),
             )
+            reminder_id = cursor.fetchone()[0]
             cursor.execute(
                 """
-                SELECT TOP 1
+                SELECT
                     reminders.id,
                     reminders.client_id,
                     reminders.case_id,
-                    reminders.[message],
+                    reminders.message,
                     reminders.remind_at,
                     reminders.finished_at,
                     reminders.created_at,
                     clients.first_name,
                     clients.last_name,
                     cases.title
-                FROM dbo.Reminders reminders
-                JOIN dbo.Clients clients ON clients.id = reminders.client_id
-                JOIN dbo.Cases cases ON cases.id = reminders.case_id
-                WHERE reminders.client_id = %s
-                    AND reminders.case_id = %s
-                    AND reminders.[message] = %s
-                    AND reminders.remind_at = %s
-                ORDER BY reminders.id DESC
+                FROM reminders reminders
+                JOIN clients clients ON clients.id = reminders.client_id
+                JOIN cases cases ON cases.id = reminders.case_id
+                WHERE reminders.id = %s
                 """,
-                (client_id, case_id, message, remind_at),
+                (reminder_id,),
             )
             reminder = row_to_reminder(cursor.fetchone())
             conn.commit()
@@ -1384,16 +1304,16 @@ def get_reminder_history():
                     reminders.id,
                     reminders.client_id,
                     reminders.case_id,
-                    reminders.[message],
+                    reminders.message,
                     reminders.remind_at,
                     reminders.finished_at,
                     reminders.created_at,
                     clients.first_name,
                     clients.last_name,
                     cases.title
-                FROM dbo.Reminders reminders
-                JOIN dbo.Clients clients ON clients.id = reminders.client_id
-                JOIN dbo.Cases cases ON cases.id = reminders.case_id
+                FROM reminders reminders
+                JOIN clients clients ON clients.id = reminders.client_id
+                JOIN cases cases ON cases.id = reminders.case_id
                 {where_clause}
                 ORDER BY reminders.created_at DESC, reminders.remind_at DESC
                 """,
@@ -1421,18 +1341,18 @@ def get_due_reminders():
                     reminders.id,
                     reminders.client_id,
                     reminders.case_id,
-                    reminders.[message],
+                    reminders.message,
                     reminders.remind_at,
                     reminders.finished_at,
                     reminders.created_at,
                     clients.first_name,
                     clients.last_name,
                     cases.title
-                FROM dbo.Reminders reminders
-                JOIN dbo.Clients clients ON clients.id = reminders.client_id
-                JOIN dbo.Cases cases ON cases.id = reminders.case_id
+                FROM reminders reminders
+                JOIN clients clients ON clients.id = reminders.client_id
+                JOIN cases cases ON cases.id = reminders.case_id
                 WHERE reminders.finished_at IS NULL
-                    AND reminders.remind_at <= SYSUTCDATETIME()
+                    AND reminders.remind_at <= CURRENT_TIMESTAMP
                 ORDER BY reminders.remind_at ASC
                 """
             )
@@ -1455,7 +1375,7 @@ def dismiss_reminder(reminder_id):
             cursor.execute(
                 """
                 SELECT remind_at
-                FROM dbo.Reminders
+                FROM reminders
                 WHERE id = %s
                     AND finished_at IS NULL
                 """,
@@ -1469,7 +1389,7 @@ def dismiss_reminder(reminder_id):
 
             cursor.execute(
                 """
-                UPDATE dbo.Reminders
+                UPDATE reminders
                 SET remind_at = %s
                 WHERE id = %s
                 """,
@@ -1493,8 +1413,8 @@ def finish_reminder(reminder_id):
             ensure_reminders_table(cursor)
             cursor.execute(
                 """
-                UPDATE dbo.Reminders
-                SET finished_at = SYSUTCDATETIME()
+                UPDATE reminders
+                SET finished_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                     AND finished_at IS NULL
                 """,
@@ -1535,9 +1455,9 @@ def schedule_admin_note():
             ensure_admin_notes_table(cursor)
             cursor.execute(
                 """
-                INSERT INTO dbo.AdminNotes (note, send_at)
-                OUTPUT INSERTED.id
+                INSERT INTO admin_notes (note, send_at)
                 VALUES (%s, %s)
+                RETURNING id
                 """,
                 (note, send_at),
             )
@@ -1568,8 +1488,11 @@ def delete_client(client_id):
             cursor = conn.cursor()
             ensure_clients_table(cursor)
             ensure_reminders_table(cursor)
-            cursor.execute("DELETE FROM dbo.Reminders WHERE client_id = %s", (client_id,))
-            cursor.execute("DELETE FROM dbo.Clients WHERE id = %s", (client_id,))
+            ensure_sms_messages_table(cursor)
+            cursor.execute("DELETE FROM reminders WHERE client_id = %s", (client_id,))
+            cursor.execute("DELETE FROM admin_notes WHERE client_id = %s", (client_id,))
+            cursor.execute("DELETE FROM sms_messages WHERE client_id = %s", (client_id,))
+            cursor.execute("DELETE FROM clients WHERE id = %s", (client_id,))
             deleted_count = cursor.rowcount
             conn.commit()
 

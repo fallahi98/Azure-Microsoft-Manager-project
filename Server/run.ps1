@@ -30,10 +30,10 @@ if (Test-Path $credentialsPath) {
     . $credentialsPath
 }
 
-$env:DB_SERVER = if ($env:DB_SERVER) { $env:DB_SERVER } else { "aminsproject.database.windows.net" }
-$env:DB_PORT = if ($env:DB_PORT) { $env:DB_PORT } else { "1433" }
-$env:DB_NAME = if ($env:DB_NAME) { $env:DB_NAME } else { "aminsproject" }
-$env:ACS_SMS_FROM_PHONE = if ($env:ACS_SMS_FROM_PHONE) { $env:ACS_SMS_FROM_PHONE } else { "+16302002405" }
+$env:DB_HOST = if ($env:DB_HOST) { $env:DB_HOST } elseif ($env:DB_SERVER) { $env:DB_SERVER } else { "localhost" }
+$env:DB_PORT = if ($env:DB_PORT) { $env:DB_PORT } else { "5432" }
+$env:DB_NAME = if ($env:DB_NAME) { $env:DB_NAME } else { "client_manager" }
+$env:SMS_GATEWAY_DOMAIN = if ($env:SMS_GATEWAY_DOMAIN) { $env:SMS_GATEWAY_DOMAIN } else { "vtext.com" }
 $env:ADMIN_EMAIL = if ($env:ADMIN_EMAIL) { $env:ADMIN_EMAIL } else { "fallahi98@gmail.com" }
 $env:SMTP_HOST = if ($env:SMTP_HOST) { $env:SMTP_HOST } else { "smtp.gmail.com" }
 $env:SMTP_PORT = if ($env:SMTP_PORT) { $env:SMTP_PORT } else { "587" }
@@ -46,12 +46,12 @@ Write-Host ""
 
 Read-RequiredValue -Name "DB_USER" -Prompt "Database username"
 Read-RequiredValue -Name "DB_PASSWORD" -Prompt "Database password" -Secret
-Read-RequiredValue -Name "ACS_CONNECTION_STRING" -Prompt "Azure Communication Services connection string" -Secret
 Read-RequiredValue -Name "SMTP_USERNAME" -Prompt "SMTP username"
 Read-RequiredValue -Name "SMTP_PASSWORD" -Prompt "SMTP password" -Secret
 
 Write-Host "Starting Flask server..." -ForegroundColor Green
-Write-Host "Database driver: pymssql"
+Write-Host "Database driver: psycopg2 / PostgreSQL"
+Write-Host "SMS gateway: $env:SMS_GATEWAY_DOMAIN"
 Write-Host "Server URL: http://127.0.0.1:5000/"
 Write-Host "Log file: $logPath"
 Write-Host ""
