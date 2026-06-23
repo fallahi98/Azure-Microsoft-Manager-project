@@ -1,4 +1,5 @@
 import os
+import socket
 import smtplib
 import threading
 import time
@@ -236,6 +237,25 @@ def error_response(message, status_code=500):
     return jsonify({"error": message}), status_code
 
 
+def open_smtp_connection(host, port, timeout=15):
+    ipv4_addresses = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    last_error = None
+
+    for address_info in ipv4_addresses:
+        _, _, _, _, socket_address = address_info
+        try:
+            smtp = smtplib.SMTP(timeout=timeout)
+            smtp.connect(socket_address[0], socket_address[1])
+            return smtp
+        except OSError as error:
+            last_error = error
+
+    if last_error:
+        raise last_error
+
+    raise RuntimeError(f"Could not resolve SMTP host: {host}")
+
+
 def normalize_sms_phone_number(phone_number):
     digits = "".join(character for character in str(phone_number) if character.isdigit())
 
@@ -271,7 +291,7 @@ def send_sms_message(to_phone_number, message):
     sms_email["To"] = sms_email_address
     sms_email.set_content(message[:1400])
 
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+    with open_smtp_connection(smtp_host, smtp_port, timeout=15) as smtp:
         if smtp_use_tls:
             smtp.starttls()
         smtp.login(smtp_username, smtp_password)
@@ -299,7 +319,7 @@ def send_email_to_admin(subject, body):
     message["To"] = admin_email
     message.set_content(body)
 
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+    with open_smtp_connection(smtp_host, smtp_port, timeout=15) as smtp:
         if smtp_use_tls:
             smtp.starttls()
         smtp.login(smtp_username, smtp_password)
