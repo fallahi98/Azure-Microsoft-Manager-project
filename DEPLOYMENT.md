@@ -17,6 +17,16 @@ This project can run from one public Render URL.
 5. Select the repository and let Render read `render.yaml`.
 6. Create the service and database.
 
+Do not create only a **Static Site** for this app. A static site can build the React frontend, but it cannot run Flask or PostgreSQL. Use **Blueprint** so Render creates the Python web service and database.
+
+If Render shows this error:
+
+```text
+Couldn't find a package.json file in "/opt/render/project/src"
+```
+
+then Render is trying to run npm from the repository root. The repository now includes a root `package.json` bridge, but the recommended fix is still to deploy from **New > Blueprint** using `render.yaml`.
+
 ## Required Secret Environment Variables
 
 After Render creates the web service, open the web service settings and add these environment variables:

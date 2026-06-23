@@ -1,0 +1,9 @@
+{
+  "name": "client-manager-project",
+  "private": true,
+  "scripts": {
+    "build": "cd Client && npm install && npm run build",
+    "render-build": "pip install -r Server/requirements.txt && cd Client && npm install && npm run build",
+    "start": "cd Server && gunicorn app:app --bind 0.0.0.0:$PORT"
+  }
+}
