@@ -5,19 +5,29 @@ import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import psycopg2
 from psycopg2 import OperationalError
 
 
-app = Flask(__name__)
-CORS(app)
+CLIENT_DIST_DIR = Path(__file__).resolve().parent.parent / "Client" / "dist"
+
+app = Flask(__name__, static_folder=str(CLIENT_DIST_DIR), static_url_path="")
+CORS(app, origins=os.getenv("CORS_ORIGINS", "*").split(","))
 note_scheduler_started = False
 
 
 def get_db():
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        try:
+            return psycopg2.connect(database_url, connect_timeout=15)
+        except OperationalError as error:
+            raise RuntimeError("PostgreSQL connection failed. Check DATABASE_URL.") from error
+
     host = os.getenv("DB_HOST", os.getenv("DB_SERVER", "localhost"))
     database = os.getenv("DB_NAME", "client_manager")
     user = os.getenv("DB_USER", "")
@@ -568,6 +578,20 @@ def handle_unexpected_error(error):
 
 @app.route("/", methods=["GET"])
 def health_check():
+    if CLIENT_DIST_DIR.exists():
+        return send_from_directory(CLIENT_DIST_DIR, "index.html")
+
+    return jsonify(
+        {
+            "status": "ok",
+            "message": "Flask backend is running",
+            "database_driver": "psycopg2",
+        }
+    )
+
+
+@app.route("/health", methods=["GET"])
+def backend_health_check():
     return jsonify(
         {
             "status": "ok",
@@ -1507,6 +1531,21 @@ def delete_client(client_id):
         return error_response("Failed to delete client", 500)
 
 
+@app.route("/<path:path>", methods=["GET"])
+def serve_frontend(path):
+    if not CLIENT_DIST_DIR.exists():
+        return error_response("Frontend build not found. Run npm run build in the Client folder.", 404)
+
+    requested_file = CLIENT_DIST_DIR / path
+    if requested_file.is_file():
+        return send_from_directory(CLIENT_DIST_DIR, path)
+
+    return send_from_directory(CLIENT_DIST_DIR, "index.html")
+
+
+start_note_scheduler()
+
+
 if __name__ == "__main__":
-    start_note_scheduler()
-    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
