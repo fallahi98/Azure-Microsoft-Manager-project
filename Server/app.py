@@ -692,6 +692,38 @@ def backend_health_check():
     )
 
 
+@app.route("/diagnostics/smtp", methods=["GET"])
+def smtp_diagnostics():
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "false").lower() == "true"
+
+    if not all([smtp_host, smtp_username, smtp_password]):
+        return error_response("SMTP settings are missing", 500)
+
+    diagnostic_message = EmailMessage()
+    diagnostic_message["Subject"] = "Client Manager SMTP test"
+    diagnostic_message["From"] = os.getenv("SMTP_FROM_EMAIL", smtp_username)
+    diagnostic_message["To"] = smtp_username
+    diagnostic_message.set_content("Client Manager SMTP diagnostic test.")
+
+    try:
+        deliver_smtp_message(
+            diagnostic_message,
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+            smtp_use_tls,
+        )
+        return jsonify({"status": "ok", "message": "SMTP test email sent"})
+    except Exception as error:
+        app.logger.exception("SMTP diagnostic failed")
+        return error_response(str(error), 500)
+
+
 @app.route("/clients", methods=["GET"])
 def get_clients():
     try:

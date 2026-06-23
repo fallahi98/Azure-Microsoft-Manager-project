@@ -30,6 +30,14 @@ SMTP_FROM_EMAIL=your-email@example.com
 
 For Gmail, `SMTP_PASSWORD` must be a Gmail app password, not the normal Gmail login password.
 
+Use these Gmail SMTP values:
+
+```text
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USE_TLS=false
+```
+
 ## Optional SMS Setting
 
 The default SMS gateway is Verizon:
