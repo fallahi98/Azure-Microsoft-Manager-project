@@ -13,7 +13,10 @@ from flask_cors import CORS
 import psycopg2
 import requests
 from psycopg2 import OperationalError
-from twilio.rest import Client as TwilioClient
+try:
+    from twilio.rest import Client as TwilioClient
+except ImportError:
+    TwilioClient = None
 
 
 CLIENT_DIST_DIR = Path(__file__).resolve().parent.parent / "Client" / "dist"
@@ -392,6 +395,9 @@ def normalize_e164_us_phone_number(phone_number):
 
 
 def send_twilio_sms_message(to_phone_number, message):
+    if TwilioClient is None:
+        return None
+
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
     from_phone_number = os.getenv("TWILIO_FROM_PHONE")
