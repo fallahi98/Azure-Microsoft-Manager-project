@@ -1,6 +1,6 @@
 # PythonAnywhere Deployment
 
-Use PythonAnywhere when you want the public app to send SMS through Gmail SMTP and Verizon `vtext.com`, the same path that worked on your local computer.
+Use PythonAnywhere to host the public app. For reliable SMS, use Twilio. Gmail-to-Verizon email gateway sending remains available only as a fallback.
 
 ## 1. Open a Paid PythonAnywhere Account
 
@@ -46,7 +46,7 @@ DB_USER=your-postgres-username
 DB_PASSWORD=your-postgres-password
 ```
 
-## 5. Set Up Gmail SMTP
+## 5. Set Up Email and SMS
 
 In the same `Server/pythonanywhere.env` file, set:
 
@@ -62,6 +62,16 @@ SMS_GATEWAY_DOMAIN=vtext.com
 ```
 
 `SMTP_PASSWORD` must be a Gmail app password, not your normal Gmail password.
+
+For reliable SMS, also set Twilio credentials:
+
+```text
+TWILIO_ACCOUNT_SID=your-twilio-account-sid
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_FROM_PHONE=+15551234567
+```
+
+`TWILIO_FROM_PHONE` must be your Twilio phone number in E.164 format. Example: `+16302002405`.
 
 ## 6. Configure the Web App
 
@@ -124,10 +134,14 @@ https://yourusername.pythonanywhere.com
 
 ## 9. Test SMS
 
-Use a client phone number with 10 US digits. The app sends SMS through:
+Use a client phone number with 10 US digits or E.164 format. If Twilio is configured, the app sends SMS through:
+
+```text
+Twilio -> client phone
+```
+
+If Twilio is not configured, the app falls back to:
 
 ```text
 your-gmail@gmail.com -> 10digitnumber@vtext.com -> Verizon phone
 ```
-
-If the phone is not Verizon, change `SMS_GATEWAY_DOMAIN` to the correct carrier gateway.

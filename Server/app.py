@@ -13,6 +13,7 @@ from flask_cors import CORS
 import psycopg2
 import requests
 from psycopg2 import OperationalError
+from twilio.rest import Client as TwilioClient
 
 
 CLIENT_DIST_DIR = Path(__file__).resolve().parent.parent / "Client" / "dist"
@@ -385,7 +386,34 @@ def normalize_sms_phone_number(phone_number):
     return digits
 
 
+def normalize_e164_us_phone_number(phone_number):
+    digits = normalize_sms_phone_number(phone_number)
+    return f"+1{digits}"
+
+
+def send_twilio_sms_message(to_phone_number, message):
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_phone_number = os.getenv("TWILIO_FROM_PHONE")
+
+    if not all([account_sid, auth_token, from_phone_number]):
+        return None
+
+    twilio_client = TwilioClient(account_sid, auth_token)
+    twilio_message = twilio_client.messages.create(
+        body=message,
+        from_=from_phone_number,
+        to=normalize_e164_us_phone_number(to_phone_number),
+    )
+
+    return f"twilio:{twilio_message.sid}; status:{twilio_message.status}"
+
+
 def send_sms_message(to_phone_number, message):
+    twilio_provider_id = send_twilio_sms_message(to_phone_number, message)
+    if twilio_provider_id:
+        return twilio_provider_id
+
     gateway_domain = os.getenv("SMS_GATEWAY_DOMAIN", "vtext.com").strip()
     smtp_host = os.getenv("SMTP_HOST")
     smtp_username = os.getenv("SMTP_USERNAME")
