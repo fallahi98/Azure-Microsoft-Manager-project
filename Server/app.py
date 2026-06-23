@@ -29,7 +29,12 @@ def load_env_file(path):
             continue
 
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        repeated_prefix = f"{key}="
+        if value.startswith(repeated_prefix):
+            value = value[len(repeated_prefix):]
+        os.environ.setdefault(key, value)
 
 
 load_env_file(SERVER_DIR / "pythonanywhere.env")
