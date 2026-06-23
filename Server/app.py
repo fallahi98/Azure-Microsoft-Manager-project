@@ -1,6 +1,7 @@
 import os
 import socket
 import smtplib
+import ssl
 import threading
 import time
 from contextlib import closing
@@ -237,7 +238,7 @@ def error_response(message, status_code=500):
     return jsonify({"error": message}), status_code
 
 
-def open_smtp_connection(host, port, timeout=15):
+def open_smtp_connection(host, port, timeout=30):
     ipv4_addresses = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
     last_error = None
 
@@ -254,6 +255,70 @@ def open_smtp_connection(host, port, timeout=15):
         raise last_error
 
     raise RuntimeError(f"Could not resolve SMTP host: {host}")
+
+
+def open_smtp_ssl_connection(host, port, timeout=30):
+    ipv4_addresses = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    last_error = None
+    context = ssl.create_default_context()
+
+    for address_info in ipv4_addresses:
+        _, _, _, _, socket_address = address_info
+        try:
+            raw_socket = socket.create_connection(socket_address, timeout=timeout)
+            ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
+            smtp = smtplib.SMTP_SSL(timeout=timeout)
+            smtp.sock = ssl_socket
+            smtp.file = None
+            smtp.helo_resp = None
+            smtp.ehlo_resp = None
+            smtp.esmtp_features = {}
+            smtp.does_esmtp = False
+            smtp._host = host
+            smtp.getreply()
+            return smtp
+        except OSError as error:
+            last_error = error
+
+    if last_error:
+        raise last_error
+
+    raise RuntimeError(f"Could not resolve SMTP SSL host: {host}")
+
+
+def deliver_smtp_message(email_message, smtp_host, smtp_port, smtp_username, smtp_password, smtp_use_tls):
+    attempts = [{"port": smtp_port, "use_tls": smtp_use_tls, "use_ssl": smtp_port == 465}]
+
+    if smtp_port == 587:
+        attempts.append({"port": 465, "use_tls": False, "use_ssl": True})
+
+    errors = []
+
+    for attempt in attempts:
+        try:
+            if attempt["use_ssl"]:
+                smtp = open_smtp_ssl_connection(smtp_host, attempt["port"], timeout=30)
+            else:
+                smtp = open_smtp_connection(smtp_host, attempt["port"], timeout=30)
+
+            with smtp:
+                try:
+                    smtp.ehlo()
+                    if attempt["use_tls"]:
+                        smtp.starttls()
+                        smtp.ehlo()
+                    smtp.login(smtp_username, smtp_password)
+                    smtp.send_message(email_message)
+                    return
+                except Exception as error:
+                    raise RuntimeError(
+                        f"SMTP connected on port {attempt['port']} but failed during login or send: {error}"
+                    ) from error
+        except Exception as error:
+            errors.append(f"port {attempt['port']}: {error}")
+            app.logger.warning("SMTP attempt failed: %s", errors[-1])
+
+    raise RuntimeError("SMTP send failed after trying available ports. " + " | ".join(errors))
 
 
 def normalize_sms_phone_number(phone_number):
@@ -291,11 +356,14 @@ def send_sms_message(to_phone_number, message):
     sms_email["To"] = sms_email_address
     sms_email.set_content(message[:1400])
 
-    with open_smtp_connection(smtp_host, smtp_port, timeout=15) as smtp:
-        if smtp_use_tls:
-            smtp.starttls()
-        smtp.login(smtp_username, smtp_password)
-        smtp.send_message(sms_email)
+    deliver_smtp_message(
+        sms_email,
+        smtp_host,
+        smtp_port,
+        smtp_username,
+        smtp_password,
+        smtp_use_tls,
+    )
 
     return f"email-to-sms:{sms_email_address}"
 
@@ -319,11 +387,14 @@ def send_email_to_admin(subject, body):
     message["To"] = admin_email
     message.set_content(body)
 
-    with open_smtp_connection(smtp_host, smtp_port, timeout=15) as smtp:
-        if smtp_use_tls:
-            smtp.starttls()
-        smtp.login(smtp_username, smtp_password)
-        smtp.send_message(message)
+    deliver_smtp_message(
+        message,
+        smtp_host,
+        smtp_port,
+        smtp_username,
+        smtp_password,
+        smtp_use_tls,
+    )
 
     return True
 
