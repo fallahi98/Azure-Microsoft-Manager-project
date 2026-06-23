@@ -3,6 +3,7 @@ import axios from "axios";
 import "./App.css";
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://127.0.0.1:5000" : "");
+const SMS_GATEWAY_DOMAIN = import.meta.env.VITE_SMS_GATEWAY_DOMAIN || "vtext.com";
 
 const emptyClientForm = {
   first_name: "",
@@ -669,18 +670,36 @@ function App() {
       return;
     }
 
-    try {
-      const res = await axios.post(`${API_URL}/cases/${selectedCase.id}/sms`, {
-        message: enoteText.trim(),
-      });
-      setSmsHistory((currentHistory) => [res.data.sms, ...currentHistory]);
-      setEnoteText("");
+    const digits = String(selectedClient.phone_number || "").replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+    if (digits.length !== 10) {
       setShowSmsConfirm(false);
-      setMessage("SMS sent");
-    } catch (error) {
-      setShowSmsConfirm(false);
-      setMessage(error.response?.data?.error || "Could not send SMS");
+      setMessage("Client phone number must be a 10 digit US number");
+      return;
     }
+
+    const gatewayAddress = `${digits}@${SMS_GATEWAY_DOMAIN}`;
+    const smsMessage = enoteText.trim();
+    const mailtoUrl = `mailto:${gatewayAddress}?subject=${encodeURIComponent(
+      "Client Manager message",
+    )}&body=${encodeURIComponent(smsMessage)}`;
+
+    window.location.href = mailtoUrl;
+    setSmsHistory((currentHistory) => [
+      {
+        id: `mailto-${Date.now()}`,
+        status: "Prepared",
+        phone_number: selectedClient.phone_number,
+        message: smsMessage,
+        provider_message_id: `mailto:${gatewayAddress}`,
+        created_at: new Date().toISOString(),
+        sent_at: null,
+        error_message: null,
+      },
+      ...currentHistory,
+    ]);
+    setEnoteText("");
+    setShowSmsConfirm(false);
+    setMessage("Email draft opened. Send it from your email account to deliver the SMS.");
   };
 
   const openSmsHistoryWindow = async () => {
