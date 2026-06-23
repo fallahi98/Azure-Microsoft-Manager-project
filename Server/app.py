@@ -328,12 +328,14 @@ def deliver_brevo_message(email_message):
     if response.status_code >= 400:
         raise RuntimeError(f"Brevo email API failed: {response.status_code} {response.text[:500]}")
 
-    return True
+    response_data = response.json() if response.content else {}
+    return response_data.get("messageId", "brevo:accepted")
 
 
 def deliver_email_message(email_message, smtp_host, smtp_port, smtp_username, smtp_password, smtp_use_tls):
-    if deliver_brevo_message(email_message):
-        return
+    brevo_message_id = deliver_brevo_message(email_message)
+    if brevo_message_id:
+        return brevo_message_id
 
     deliver_smtp_message(
         email_message,
@@ -343,6 +345,7 @@ def deliver_email_message(email_message, smtp_host, smtp_port, smtp_username, sm
         smtp_password,
         smtp_use_tls,
     )
+    return "smtp:sent"
 
 
 def normalize_sms_phone_number(phone_number):
@@ -380,7 +383,7 @@ def send_sms_message(to_phone_number, message):
     sms_email["To"] = sms_email_address
     sms_email.set_content(message[:1400])
 
-    deliver_email_message(
+    provider_id = deliver_email_message(
         sms_email,
         smtp_host,
         smtp_port,
@@ -389,7 +392,7 @@ def send_sms_message(to_phone_number, message):
         smtp_use_tls,
     )
 
-    return f"email-to-sms:{sms_email_address}"
+    return f"email-to-sms:{sms_email_address}; provider:{provider_id}"
 
 
 def send_email_to_admin(subject, body):
@@ -745,6 +748,29 @@ def smtp_diagnostics():
         return jsonify({"status": "ok", "message": "SMTP test email sent"})
     except Exception as error:
         app.logger.exception("SMTP diagnostic failed")
+        return error_response(str(error), 500)
+
+
+@app.route("/diagnostics/sms-gateway", methods=["GET"])
+def sms_gateway_diagnostics():
+    phone_number = request.args.get("phone", "").strip()
+    if not phone_number:
+        return error_response("Add ?phone=YOUR10DIGITNUMBER to test SMS gateway delivery", 400)
+
+    try:
+        provider_message_id = send_sms_message(
+            phone_number,
+            "Client Manager SMS gateway diagnostic test.",
+        )
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "SMS gateway email accepted by provider",
+                "provider_message_id": provider_message_id,
+            }
+        )
+    except Exception as error:
+        app.logger.exception("SMS gateway diagnostic failed")
         return error_response(str(error), 500)
 
 
