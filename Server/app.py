@@ -406,7 +406,7 @@ def send_sms_message(to_phone_number, message):
     sms_email["To"] = sms_email_address
     sms_email.set_content(message[:1400])
 
-    provider_id = deliver_email_message(
+    deliver_smtp_message(
         sms_email,
         smtp_host,
         smtp_port,
@@ -415,7 +415,7 @@ def send_sms_message(to_phone_number, message):
         smtp_use_tls,
     )
 
-    return f"email-to-sms:{sms_email_address}; provider:{provider_id}"
+    return f"email-to-sms:{sms_email_address}; provider:smtp:sent"
 
 
 def send_email_to_admin(subject, body):
