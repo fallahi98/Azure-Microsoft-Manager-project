@@ -306,8 +306,10 @@ def deliver_smtp_message(email_message, smtp_host, smtp_port, smtp_username, smt
                         smtp.starttls()
                         smtp.ehlo()
                     smtp.login(smtp_username, smtp_password)
-                    smtp.send_message(email_message)
-                    return
+                    refused_recipients = smtp.send_message(email_message)
+                    if refused_recipients:
+                        raise RuntimeError(f"SMTP refused recipients: {refused_recipients}")
+                    return f"smtp:{email_message['To']}:accepted"
                 except Exception as error:
                     raise RuntimeError(
                         f"SMTP connected on port {attempt['port']} but failed during login or send: {error}"
@@ -389,24 +391,23 @@ def send_sms_message(to_phone_number, message):
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_from_email = os.getenv("SMTP_FROM_EMAIL", smtp_username)
     smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 
     if not gateway_domain:
         raise RuntimeError("SMS_GATEWAY_DOMAIN is missing. Use vtext.com for Verizon SMS.")
 
-    if not all([smtp_host, smtp_username, smtp_password, smtp_from_email]):
+    if not all([smtp_host, smtp_username, smtp_password]):
         raise RuntimeError("SMTP settings are missing. SMS gateway sending uses your email account.")
 
     sms_email_address = f"{normalize_sms_phone_number(to_phone_number)}@{gateway_domain}"
 
     sms_email = EmailMessage()
-    sms_email["Subject"] = ""
-    sms_email["From"] = smtp_from_email
+    sms_email["From"] = smtp_username
     sms_email["To"] = sms_email_address
+    sms_email["Reply-To"] = smtp_username
     sms_email.set_content(message[:1400])
 
-    deliver_smtp_message(
+    provider_id = deliver_smtp_message(
         sms_email,
         smtp_host,
         smtp_port,
@@ -415,7 +416,7 @@ def send_sms_message(to_phone_number, message):
         smtp_use_tls,
     )
 
-    return f"email-to-sms:{sms_email_address}; provider:smtp:sent"
+    return f"email-to-sms:{sms_email_address}; provider:{provider_id}"
 
 
 def send_email_to_admin(subject, body):
