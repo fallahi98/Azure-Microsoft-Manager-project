@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 import psycopg2
 import requests
@@ -754,6 +754,27 @@ def config_diagnostics():
             "database_url_set": bool(os.getenv("DATABASE_URL")),
         }
     )
+
+
+@app.route("/diagnostics/config-text", methods=["GET"])
+def config_text_diagnostics():
+    try:
+        env_file = SERVER_DIR / "pythonanywhere.env"
+        lines = [
+            f"server_dir={SERVER_DIR}",
+            f"env_file={env_file}",
+            f"env_file_exists={env_file.exists()}",
+            f"client_dist_exists={CLIENT_DIST_DIR.exists()}",
+            f"db_host={os.getenv('DB_HOST', '')}",
+            f"db_port={os.getenv('DB_PORT', '')}",
+            f"db_name={os.getenv('DB_NAME', '')}",
+            f"db_user={os.getenv('DB_USER', '')}",
+            f"db_password_set={bool(os.getenv('DB_PASSWORD'))}",
+            f"database_url_set={bool(os.getenv('DATABASE_URL'))}",
+        ]
+        return Response("\n".join(lines), mimetype="text/plain")
+    except Exception as error:
+        return Response(f"config diagnostic failed: {error}", status=500, mimetype="text/plain")
 
 
 @app.route("/diagnostics/smtp", methods=["GET"])
