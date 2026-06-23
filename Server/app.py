@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import psycopg2
+import requests
 from psycopg2 import OperationalError
 
 
@@ -295,6 +296,55 @@ def deliver_smtp_message(email_message, smtp_host, smtp_port, smtp_username, smt
     raise RuntimeError("SMTP send failed after trying available ports. " + " | ".join(errors))
 
 
+def deliver_brevo_message(email_message):
+    api_key = os.getenv("BREVO_API_KEY")
+    if not api_key:
+        return False
+
+    from_email = email_message["From"]
+    to_email = email_message["To"]
+    subject = email_message["Subject"] or "Client Manager notification"
+    body = email_message.get_content()
+
+    response = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        json={
+            "sender": {
+                "email": from_email,
+                "name": os.getenv("BREVO_SENDER_NAME", "Client Manager"),
+            },
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": body,
+        },
+        timeout=30,
+    )
+
+    if response.status_code >= 400:
+        raise RuntimeError(f"Brevo email API failed: {response.status_code} {response.text[:500]}")
+
+    return True
+
+
+def deliver_email_message(email_message, smtp_host, smtp_port, smtp_username, smtp_password, smtp_use_tls):
+    if deliver_brevo_message(email_message):
+        return
+
+    deliver_smtp_message(
+        email_message,
+        smtp_host,
+        smtp_port,
+        smtp_username,
+        smtp_password,
+        smtp_use_tls,
+    )
+
+
 def normalize_sms_phone_number(phone_number):
     digits = "".join(character for character in str(phone_number) if character.isdigit())
 
@@ -330,7 +380,7 @@ def send_sms_message(to_phone_number, message):
     sms_email["To"] = sms_email_address
     sms_email.set_content(message[:1400])
 
-    deliver_smtp_message(
+    deliver_email_message(
         sms_email,
         smtp_host,
         smtp_port,
@@ -361,7 +411,7 @@ def send_email_to_admin(subject, body):
     message["To"] = admin_email
     message.set_content(body)
 
-    deliver_smtp_message(
+    deliver_email_message(
         message,
         smtp_host,
         smtp_port,
@@ -684,7 +734,7 @@ def smtp_diagnostics():
     diagnostic_message.set_content("Client Manager SMTP diagnostic test.")
 
     try:
-        deliver_smtp_message(
+        deliver_email_message(
             diagnostic_message,
             smtp_host,
             smtp_port,

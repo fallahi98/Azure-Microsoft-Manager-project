@@ -23,18 +23,29 @@ After Render creates the web service, open the web service settings and add thes
 
 ```text
 ADMIN_EMAIL=your-admin-email@example.com
-SMTP_USERNAME=your-email@example.com
-SMTP_PASSWORD=your-email-app-password
 SMTP_FROM_EMAIL=your-email@example.com
+BREVO_API_KEY=your-brevo-api-key
 ```
 
-For Gmail, `SMTP_PASSWORD` must be a Gmail app password, not the normal Gmail login password.
+Render can time out when using direct Gmail SMTP. For Render, use Brevo's HTTPS email API instead:
 
-Use these Gmail SMTP values:
+1. Create or open a Brevo account.
+2. Create a transactional email API key.
+3. Add the API key to Render as `BREVO_API_KEY`.
+4. Make sure `SMTP_FROM_EMAIL` is an email sender that Brevo allows.
+
+Brevo API documentation: https://developers.brevo.com/reference/send-transac-email
+
+## Optional Local Gmail SMTP Settings
+
+If you run the app on your own computer instead of Render, Gmail SMTP can still work locally. Use:
 
 ```text
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=465
+SMTP_USERNAME=your-email@example.com
+SMTP_PASSWORD=your-gmail-app-password
+SMTP_FROM_EMAIL=your-email@example.com
 SMTP_USE_TLS=false
 ```
 
