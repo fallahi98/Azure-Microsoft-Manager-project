@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 
-PROJECT_DIR = Path(os.getenv("CLIENT_MANAGER_PROJECT_DIR", "/home/yourusername/Client-Manager-project"))
+PROJECT_DIR = Path(os.getenv("CLIENT_MANAGER_PROJECT_DIR", Path(__file__).resolve().parent.parent))
 ENV_FILE = Path(os.getenv("CLIENT_MANAGER_ENV_FILE", PROJECT_DIR / "Server" / "pythonanywhere.env"))
 
 

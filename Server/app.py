@@ -16,6 +16,23 @@ from psycopg2 import OperationalError
 
 
 CLIENT_DIST_DIR = Path(__file__).resolve().parent.parent / "Client" / "dist"
+SERVER_DIR = Path(__file__).resolve().parent
+
+
+def load_env_file(path):
+    if not path.exists():
+        return
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file(SERVER_DIR / "pythonanywhere.env")
 
 app = Flask(__name__, static_folder=str(CLIENT_DIST_DIR), static_url_path="")
 CORS(app, origins=os.getenv("CORS_ORIGINS", "*").split(","))
@@ -37,10 +54,10 @@ def get_db():
     port = int(os.getenv("DB_PORT", "5432"))
 
     if not user:
-        raise RuntimeError("Database username is missing. Add DB_USER in Server\\credentials.local.ps1 or enter it at startup.")
+        raise RuntimeError("Database username is missing. Add DB_USER in Server/pythonanywhere.env on PythonAnywhere or Server\\credentials.local.ps1 locally.")
 
     if not password:
-        raise RuntimeError("Database password is missing. Add DB_PASSWORD in Server\\credentials.local.ps1 or enter it at startup.")
+        raise RuntimeError("Database password is missing. Add DB_PASSWORD in Server/pythonanywhere.env on PythonAnywhere or Server\\credentials.local.ps1 locally.")
 
     try:
         return psycopg2.connect(
