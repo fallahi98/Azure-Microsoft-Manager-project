@@ -1,7 +1,6 @@
 import os
 import socket
 import smtplib
-import ssl
 import threading
 import time
 from contextlib import closing
@@ -258,32 +257,7 @@ def open_smtp_connection(host, port, timeout=30):
 
 
 def open_smtp_ssl_connection(host, port, timeout=30):
-    ipv4_addresses = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-    last_error = None
-    context = ssl.create_default_context()
-
-    for address_info in ipv4_addresses:
-        _, _, _, _, socket_address = address_info
-        try:
-            raw_socket = socket.create_connection(socket_address, timeout=timeout)
-            ssl_socket = context.wrap_socket(raw_socket, server_hostname=host)
-            smtp = smtplib.SMTP_SSL(timeout=timeout)
-            smtp.sock = ssl_socket
-            smtp.file = None
-            smtp.helo_resp = None
-            smtp.ehlo_resp = None
-            smtp.esmtp_features = {}
-            smtp.does_esmtp = False
-            smtp._host = host
-            smtp.getreply()
-            return smtp
-        except OSError as error:
-            last_error = error
-
-    if last_error:
-        raise last_error
-
-    raise RuntimeError(f"Could not resolve SMTP SSL host: {host}")
+    return smtplib.SMTP_SSL(host, port, timeout=timeout)
 
 
 def deliver_smtp_message(email_message, smtp_host, smtp_port, smtp_username, smtp_password, smtp_use_tls):
