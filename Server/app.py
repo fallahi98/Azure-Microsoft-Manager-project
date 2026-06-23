@@ -69,8 +69,9 @@ def get_db():
             connect_timeout=15,
         )
     except OperationalError as error:
+        app.logger.exception("PostgreSQL connection failed")
         raise RuntimeError(
-            "PostgreSQL connection failed. Check DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD."
+            f"PostgreSQL connection failed. Check DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD. Details: {error}"
         ) from error
 
 
@@ -732,6 +733,25 @@ def backend_health_check():
             "status": "ok",
             "message": "Flask backend is running",
             "database_driver": "psycopg2",
+        }
+    )
+
+
+@app.route("/diagnostics/config", methods=["GET"])
+def config_diagnostics():
+    env_file = SERVER_DIR / "pythonanywhere.env"
+    return jsonify(
+        {
+            "server_dir": str(SERVER_DIR),
+            "env_file": str(env_file),
+            "env_file_exists": env_file.exists(),
+            "client_dist_exists": CLIENT_DIST_DIR.exists(),
+            "db_host": os.getenv("DB_HOST", ""),
+            "db_port": os.getenv("DB_PORT", ""),
+            "db_name": os.getenv("DB_NAME", ""),
+            "db_user": os.getenv("DB_USER", ""),
+            "db_password_set": bool(os.getenv("DB_PASSWORD")),
+            "database_url_set": bool(os.getenv("DATABASE_URL")),
         }
     )
 
