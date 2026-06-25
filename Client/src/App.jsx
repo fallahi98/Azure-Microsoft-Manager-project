@@ -674,17 +674,32 @@ function App() {
       return;
     }
 
+    const digits = String(selectedClient.phone_number || "").replace(/\D/g, "");
+    const e164Number = digits.length === 10 ? `+1${digits}` : digits.startsWith("1") ? `+${digits}` : selectedClient.phone_number;
+    const smsMessage = enoteText.trim();
+    const smsUrl = `sms:${encodeURIComponent(e164Number)}?&body=${encodeURIComponent(smsMessage)}`;
+
     try {
-      const res = await axios.post(`${API_URL}/cases/${selectedCase.id}/sms`, {
-        message: enoteText.trim(),
-      });
-      setSmsHistory((currentHistory) => [res.data.sms, ...currentHistory]);
+      window.location.href = smsUrl;
+      setSmsHistory((currentHistory) => [
+        {
+          id: `sms-app-${Date.now()}`,
+          status: "Prepared",
+          phone_number: e164Number,
+          message: smsMessage,
+          provider_message_id: `sms-app:${e164Number}`,
+          created_at: new Date().toISOString(),
+          sent_at: null,
+          error_message: null,
+        },
+        ...currentHistory,
+      ]);
       setEnoteText("");
       setShowSmsConfirm(false);
-      setMessage("SMS sent");
+      setMessage("SMS app opened. Press send in your messaging app.");
     } catch (error) {
       setShowSmsConfirm(false);
-      setMessage(error.response?.data?.error || "Could not send SMS");
+      setMessage("Could not open SMS app on this device");
     }
   };
 
